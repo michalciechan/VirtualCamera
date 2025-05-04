@@ -14,15 +14,15 @@ void MovementController::on_update(Entity& entity, float dt) {
     auto rotation = entity.rotation();
     auto position = entity.position();
 
-    auto const local_transform = calculate_transform_matrix(dtr, dr, glm::vec3(1.0f));
+    auto const local_delta_transform = calculate_transform_matrix(dtr, dr, glm::vec3(1.0f));
     auto const local_to_scene_transform = calculate_transform_matrix(position, rotation, glm::vec3(1.0f));
-    auto const new_position = glm::vec3(local_to_scene_transform * local_transform * glm::vec4(glm::vec3(0.0f), 1.0f));
+    auto const new_local_to_scene_transform = local_to_scene_transform * local_delta_transform;
 
-    auto const local_rotation = calculate_transform_matrix(glm::vec3(0.0f), dr, glm::vec3(1.0f));
-    auto const local_to_scene_rotation = calculate_transform_matrix(glm::vec3(0.0f), rotation, glm::vec3(1.0f));
+    auto const new_position = glm::vec3(new_local_to_scene_transform * glm::vec4(glm::vec3(0.0f), 1.0f));
+
     glm::vec3 new_rotation;
     glm::extractEulerAngleYXZ(
-        local_to_scene_rotation * local_rotation,
+        new_local_to_scene_transform,
         new_rotation.y,
         new_rotation.x,
         new_rotation.z
