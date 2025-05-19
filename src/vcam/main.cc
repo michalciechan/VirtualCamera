@@ -136,16 +136,15 @@ int main(int argc, char* argv[]) {
 void on_init(GlobalState& state) {
     auto pyramid_model = std::make_shared<vcam::Model>(PYRAMID_MODEL);
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> x(-10.0f, 10.0f);
-    std::uniform_real_distribution<float> y(-10.0f, 10.0f);
-    std::uniform_real_distribution<float> z(-10.0f, 10.0f);
-    std::uniform_real_distribution<float> rx(0.0f, 2 * std::numbers::pi);
-    std::uniform_real_distribution<float> ry(0.0f, 2 * std::numbers::pi);
-    std::uniform_real_distribution<float> rz(0.0f, 2 * std::numbers::pi);
-    std::uniform_real_distribution<float> scale(0.1f, 3.0f);
-    for (int i = 0; i < 100; ++i) {
+    std::mt19937 gen(42);
+    std::uniform_real_distribution<float> x(-2.0f, 2.0f);
+    std::uniform_real_distribution<float> y(-2.0f, 2.0f);
+    std::uniform_real_distribution<float> z(5.0f, 10.0f);
+    std::uniform_real_distribution<float> rx(0.0f, 0 * 2 * std::numbers::pi);
+    std::uniform_real_distribution<float> ry(0.0f, 0 * 2 * std::numbers::pi);
+    std::uniform_real_distribution<float> rz(0.0f, 0 * 2 * std::numbers::pi);
+    std::uniform_real_distribution<float> scale(1.0f, 1.0f);
+    for (int i = 0; i < 10; ++i) {
         auto pyramid_entity = std::make_shared<vcam::Entity>();
         pyramid_entity->position(glm::vec3(x(gen), y(gen), z(gen)));
         pyramid_entity->rotation(glm::vec3(rx(gen), ry(gen), rz(gen)));
