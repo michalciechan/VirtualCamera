@@ -10,6 +10,10 @@ void RenderSystem::add_instance(Model const& model, glm::mat4 model_to_scene_tra
     m_models.insert(std::make_pair(&model, model_to_scene_transform));
 }
 
+static glm::mat4 calculate_scene_to_camera_transform(Camera const& camera);
+static glm::mat4 calculate_camera_to_projection_transform(Camera const& camera, float aspect_ratio);
+static glm::mat4 calculate_projection_to_viewport_transform(int width, int height);
+
 void RenderSystem::render() {
     auto const scene_to_camera_transform = calculate_scene_to_camera_transform(m_camera);
 
@@ -19,25 +23,49 @@ void RenderSystem::render() {
     SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(m_renderer);
 
+    m_surface = SDL_CreateSurface(
+        width,
+        height,
+        SDL_PIXELFORMAT_RGBA8888
+    );
+
     auto const camera_to_projection_transform = calculate_camera_to_projection_transform(m_camera, static_cast<float>(width) / height);
     auto const projection_to_viewport_transform = calculate_projection_to_viewport_transform(width, height);
+
+    std::vector<float> depth_buffer(
+        width * height,
+        -std::numeric_limits<float>::infinity()
+    );
 
     for (auto const& [model, model_to_scene_transform] : m_models) {
         auto const model_to_camera_transform = scene_to_camera_transform * model_to_scene_transform;
 
-        auto const transformed = transform_model(*model, model_to_camera_transform);
-        auto const projected = project_model(transformed, camera_to_projection_transform);
-        auto const clipped = clip_model(projected);
-        auto const normalized = normalize_model(clipped);
+        ScratchModel scratch(*model);
 
-        render_model(normalized, projection_to_viewport_transform);
+        transform_model(scratch, model_to_camera_transform);
+        project_model(scratch, camera_to_projection_transform);
+        clip_model(scratch);
+        normalize_model(scratch);
+        viewport_model(scratch, projection_to_viewport_transform);
+
+        rasterize_model(scratch, depth_buffer, width, height);
     }
 
+    auto* const texture = SDL_CreateTextureFromSurface(
+        m_renderer,
+        m_surface
+    );
+    SDL_RenderTexture(m_renderer, texture, nullptr, nullptr);
+    SDL_DestroyTexture(texture);
     SDL_RenderPresent(m_renderer);
+
+    SDL_DestroySurface(m_surface);
+    m_surface = nullptr;
+
     m_models.clear();
 }
 
-glm::mat4 RenderSystem::calculate_scene_to_camera_transform(Camera const& camera) {
+glm::mat4 calculate_scene_to_camera_transform(Camera const& camera) {
     auto const camera_to_scene_transform = calculate_transform_matrix(
         camera.position,
         camera.rotation,
@@ -47,10 +75,10 @@ glm::mat4 RenderSystem::calculate_scene_to_camera_transform(Camera const& camera
     return glm::inverse(camera_to_scene_transform);
 }
 
-glm::mat4 RenderSystem::calculate_camera_to_projection_transform(Camera const& camera, float aspect_ratio) {
+glm::mat4 calculate_camera_to_projection_transform(Camera const& camera, float aspect_ratio) {
     auto const half_tan = std::tan(to_radians(camera.vfov) * 0.5f);
     auto const z_near = 1.0f;
-    auto const z_far = 1000.0f;
+    auto const z_far = 100.0f;
 
     return {
         1 / (half_tan * aspect_ratio), 0, 0, 0,
@@ -60,7 +88,7 @@ glm::mat4 RenderSystem::calculate_camera_to_projection_transform(Camera const& c
     };
 }
 
-glm::mat4 RenderSystem::calculate_projection_to_viewport_transform(int width, int height) {
+glm::mat4 calculate_projection_to_viewport_transform(int width, int height) {
     return {
         width / 2.0f, 0, 0, 0,
         0, -height / 2.0f, 0, 0,
@@ -69,82 +97,26 @@ glm::mat4 RenderSystem::calculate_projection_to_viewport_transform(int width, in
     };
 }
 
-Model RenderSystem::transform_model(Model model, glm::mat4 const& model_to_camera_transform) {
-    auto& mesh = model.mesh();
-    for (auto& vertex : mesh.vertices()) {
+void RenderSystem::transform_model(ScratchModel& scratch, glm::mat4 const& model_to_camera_transform) {
+    for (auto& vertex : scratch.vertices) {
         vertex = model_to_camera_transform * vertex;
     }
-
-    return model;
 }
 
-Model RenderSystem::project_model(Model model, glm::mat4 const& camera_to_projection_transform) {
-    auto& mesh = model.mesh();
-    auto& vertices = mesh.vertices();
-    for (auto& vertex : vertices) {
+void RenderSystem::project_model(ScratchModel& scratch, glm::mat4 const& camera_to_projection_transform) {
+    for (auto& vertex : scratch.vertices) {
         vertex = camera_to_projection_transform * vertex;
     }
-
-    return model;
 }
 
-Model RenderSystem::clip_model(Model model) {
-    auto& mesh = model.mesh();
-    auto& vertices = mesh.vertices();
-    auto& triangles = mesh.triangles();
+void RenderSystem::clip_model(ScratchModel& scratch) {
+    auto& vertices = scratch.vertices;
+    auto& colors = scratch.colors;
+    auto& inv_w = scratch.inv_w;
+    auto& triangles = scratch.triangles;
 
-    std::vector<glm::vec4> clipped_vertices;
-    clipped_vertices.reserve(vertices.size());
-    std::vector<std::array<std::size_t, 3>> clipped_triangles;
-    clipped_triangles.reserve(triangles.size());
-
-    for (auto& triangle : triangles) {
-        auto const clipped = clip_triangle({ vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]] });
-        for (auto& triangle : clipped) {
-            // TODO: Don't copy vertices unnecessarily.
-            clipped_vertices.insert(clipped_vertices.end(), triangle.begin(), triangle.end());
-
-            auto const size = clipped_vertices.size();
-            clipped_triangles.push_back({ size - 3, size - 2, size - 1 });
-        }
-    }
-
-    vertices = clipped_vertices;
-    triangles = clipped_triangles;
-
-    return model;
-}
-
-std::vector<std::array<glm::vec4, 3>> RenderSystem::clip_triangle(std::array<glm::vec4, 3> vertices) {
-    std::array<ClipPlane, 6> clip_planes = {
-        ClipPlane::LEFT,
-        ClipPlane::RIGHT,
-        ClipPlane::BOTTOM,
-        ClipPlane::TOP,
-        ClipPlane::NEAR,
-        ClipPlane::FAR
-    };
-
-    std::vector<std::array<glm::vec4, 3>> result;
-    result.push_back(vertices);
-
-    for (auto& plane : clip_planes) {
-        std::vector<std::array<glm::vec4, 3>> temp;
-
-        for (auto triangle : result) {
-            auto const clipped = clip_triangle_against_clip_plane(triangle, plane);
-            temp.insert(temp.end(), clipped.begin(), clipped.end());
-        }
-
-        result = std::move(temp);
-    }
-
-    return result;
-}
-
-std::vector<std::array<glm::vec4, 3>> RenderSystem::clip_triangle_against_clip_plane(std::array<glm::vec4, 3> vertices, ClipPlane plane) {
-    auto clip_distance = [](glm::vec4 const& v, ClipPlane plane) -> float {
-        switch (plane) {
+    auto clip_distance = [](glm::vec4 const& v, ClipPlane p) -> float {
+        switch (p) {
         case ClipPlane::LEFT:   return v.x + v.w;
         case ClipPlane::RIGHT:  return v.w - v.x;
         case ClipPlane::BOTTOM: return v.y + v.w;
@@ -152,57 +124,170 @@ std::vector<std::array<glm::vec4, 3>> RenderSystem::clip_triangle_against_clip_p
         case ClipPlane::NEAR:   return v.z + v.w;
         case ClipPlane::FAR:    return v.w - v.z;
         }
-        return 0.0f;
+        return 0.f;
         };
 
-    std::vector<glm::vec4> inside;
-    std::vector<glm::vec4> outside;
-    for (auto vertex : vertices) {
-        if (clip_distance(vertex, plane) >= 0.0f) {
-            inside.push_back(vertex);
-        } else {
-            outside.push_back(vertex);
+    auto push_vertex = [&](
+        glm::vec4 const& pos,
+        glm::vec3 const& col,
+        float invw) -> std::size_t {
+            vertices.push_back(pos);
+            colors.push_back(col);
+            inv_w.push_back(invw);
+            return vertices.size() - 1;
+        };
+
+    std::array<ClipPlane, 6> planes = {
+        ClipPlane::LEFT, ClipPlane::RIGHT,
+        ClipPlane::BOTTOM, ClipPlane::TOP,
+        ClipPlane::NEAR, ClipPlane::FAR
+    };
+
+    std::vector<std::array<std::size_t, 3>> clipped_triangles;
+    clipped_triangles.reserve(triangles.size() * 2);
+
+    for (auto const& triangle : triangles) {
+        std::vector<std::size_t> polygon = { triangle[0], triangle[1], triangle[2] };
+
+        for (ClipPlane p : planes) {
+            if (polygon.empty()) break;
+
+            std::vector<std::size_t> next_polygon;
+            next_polygon.reserve(polygon.size() + 3);
+
+            for (std::size_t i = 0; i < polygon.size(); ++i) {
+                std::size_t i0 = polygon[i];
+                std::size_t i1 = polygon[(i + 1) % polygon.size()];
+
+                float d0 = clip_distance(vertices[i0], p);
+                float d1 = clip_distance(vertices[i1], p);
+
+                bool in0 = d0 >= 0.f;
+                bool in1 = d1 >= 0.f;
+
+                if (in0) next_polygon.push_back(i0);
+
+                if (in0 ^ in1) {
+                    float t = d0 / (d0 - d1);
+
+                    glm::vec4 pos = glm::mix(vertices[i0], vertices[i1], t);
+                    glm::vec3 col = glm::mix(colors[i0], colors[i1], t);
+                    float iw = glm::mix(inv_w[i0], inv_w[i1], t);
+
+                    next_polygon.push_back(push_vertex(pos, col, iw));
+                }
+            }
+            polygon.swap(next_polygon);
         }
+
+        if (polygon.size() < 3) continue;
+
+        for (std::size_t i = 1; i + 1 < polygon.size(); ++i)
+            clipped_triangles.push_back({ polygon[0], polygon[i], polygon[i + 1] });
     }
 
-    if (inside.size() == 0) {
-        return {};
-    }
-
-    return { vertices };
+    triangles.swap(clipped_triangles);
 }
 
-Model RenderSystem::normalize_model(Model model) {
-    auto& mesh = model.mesh();
-    auto& vertices = mesh.vertices();
-    for (auto& vertex : vertices) {
+void RenderSystem::normalize_model(ScratchModel& scratch) {
+    for (std::size_t i = 0; i < scratch.vertices.size(); ++i) {
+        auto& vertex = scratch.vertices[i];
+        scratch.inv_w[i] = 1 / vertex.w;
+        scratch.colors[i] = scratch.colors[i] / vertex.w;
         vertex /= vertex.w;
     }
-
-    return model;
 }
 
-void RenderSystem::render_model(Model model, glm::mat4 const& projection_to_viewport_transform) {
-    auto& mesh = model.mesh();
-    auto& vertices = mesh.vertices();
-    for (auto& vertex : vertices) {
+void RenderSystem::viewport_model(ScratchModel& scratch, glm::mat4 const& projection_to_viewport_transform) {
+    for (auto& vertex : scratch.vertices) {
         vertex = projection_to_viewport_transform * vertex;
     }
+}
 
-    SDL_SetRenderDrawColor(m_renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
+static glm::vec3 calculate_barycentric_coordinates(
+    glm::vec2 const& a,
+    glm::vec2 const& b,
+    glm::vec2 const& c,
+    glm::vec2 const& point
+);
 
-    for (auto const& triangle : mesh.triangles()) {
-        std::array<SDL_FPoint, 4> points;
-        for (int i = 0; i < triangle.size(); ++i) {
-            auto vertex = vertices[triangle[i]];
+void RenderSystem::rasterize_model(
+    ScratchModel& scratch,
+    std::vector<float>& depth_buffer,
+    int width,
+    int height
+) {
+    auto const& vertices = scratch.vertices;
 
-            points[i].x = vertex.x;
-            points[i].y = vertex.y;
+    for (auto const& triangle : scratch.triangles) {
+        auto const direction = glm::cross(
+            glm::vec3(glm::vec2(vertices[triangle[1]]), 0.0f) - glm::vec3(glm::vec2(vertices[triangle[0]]), 0.0f),
+            glm::vec3(glm::vec2(vertices[triangle[2]]), 0.0f) - glm::vec3(glm::vec2(vertices[triangle[0]]), 0.0f)
+        ).z;
+        if (direction > 0) {
+            continue;
         }
-        points[3] = points[0];
 
-        SDL_RenderLines(m_renderer, points.data(), points.size());
+        auto const min_x = std::min({ vertices[triangle[0]].x, vertices[triangle[1]].x, vertices[triangle[2]].x });
+        auto const max_x = std::max({ vertices[triangle[0]].x, vertices[triangle[1]].x, vertices[triangle[2]].x });
+        auto const min_y = std::min({ vertices[triangle[0]].y, vertices[triangle[1]].y, vertices[triangle[2]].y });
+        auto const max_y = std::max({ vertices[triangle[0]].y, vertices[triangle[1]].y, vertices[triangle[2]].y });
+
+        for (int y = std::floor(min_y); y <= std::ceil(max_y); ++y) {
+            if (y < 0 || y >= height) {
+                continue;
+            }
+
+            for (int x = std::ceil(min_x); x <= std::ceil(max_x); ++x) {
+                if (x < 0 || x >= width) {
+                    continue;
+                }
+
+                auto const lambda = calculate_barycentric_coordinates(
+                    vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]],
+                    glm::vec2(x + 0.5f, y + 0.5f)
+                );
+
+                auto const depth = scratch.inv_w[triangle[0]] * lambda.x +
+                    scratch.inv_w[triangle[1]] * lambda.y +
+                    scratch.inv_w[triangle[2]] * lambda.z;
+
+                auto const depth_buffer_index = static_cast<std::size_t>(y) * width + x;
+
+                if (depth > depth_buffer[depth_buffer_index]) {
+                    depth_buffer[depth_buffer_index] = depth;
+
+                    auto color = scratch.colors[triangle[0]] * lambda.x +
+                        scratch.colors[triangle[1]] * lambda.y +
+                        scratch.colors[triangle[2]] * lambda.z;
+                    color /= depth;
+                    SDL_WriteSurfacePixelFloat(m_surface, x, y, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+                }
+            }
+        }
     }
+}
+
+glm::vec3 calculate_barycentric_coordinates(
+    glm::vec2 const& a,
+    glm::vec2 const& b,
+    glm::vec2 const& c,
+    glm::vec2 const& point
+) {
+    auto const edge = [](glm::vec2 const& a, glm::vec2 const& b, glm::vec2 const& c) {
+        return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        };
+
+    auto const area = edge(a, b, c);
+    auto const alpha = edge(point, b, c) / area;
+    auto const beta = edge(a, point, c) / area;
+    auto const gamma = edge(a, b, point) / area;
+
+    if (alpha < 0 || beta < 0 || gamma < 0) {
+        return glm::vec3(std::numeric_limits<float>::quiet_NaN());
+    }
+
+    return { alpha, beta, gamma };
 }
 
 }

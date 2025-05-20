@@ -26,6 +26,21 @@ enum ClipPlane {
     FAR
 };
 
+struct ScratchModel {
+    Model const& model;
+    std::vector<glm::vec4> vertices;
+    std::vector<glm::vec3> colors;
+    std::vector<std::array<std::size_t, 3>> triangles;
+    std::vector<float> inv_w;
+
+    ScratchModel(Model const& model)
+        : model(model),
+        vertices(model.mesh().vertices()),
+        colors(model.mesh().colors()),
+        triangles(model.mesh().triangles()),
+        inv_w(model.mesh().vertices().size(), std::numeric_limits<float>::quiet_NaN()) { }
+};
+
 class RenderSystem {
 public:
     explicit RenderSystem(SDL_Renderer* renderer)
@@ -45,18 +60,15 @@ private:
 
     std::unordered_multimap<Model const*, glm::mat4> m_models;
 
-    glm::mat4 calculate_scene_to_camera_transform(Camera const& camera);
-    glm::mat4 calculate_camera_to_projection_transform(Camera const& camera, float aspect_ratio);
-    glm::mat4 calculate_projection_to_viewport_transform(int width, int height);
+    void transform_model(ScratchModel& scratch, glm::mat4 const& model_to_camera_transform);
+    void project_model(ScratchModel& scratch, glm::mat4 const& camera_to_projection_transform);
+    void clip_model(ScratchModel& scratch);
+    void normalize_model(ScratchModel& scratch);
+    void viewport_model(ScratchModel& scratch, glm::mat4 const& projection_to_viewport_transform);
 
-    Model transform_model(Model model, glm::mat4 const& model_to_camera_transform);
-    Model project_model(Model model, glm::mat4 const& camera_to_projection_transform);
-    Model clip_model(Model model);
-    std::vector<std::array<glm::vec4, 3>> clip_triangle(std::array<glm::vec4, 3> vertices);
-    std::vector<std::array<glm::vec4, 3>> clip_triangle_against_clip_plane(std::array<glm::vec4, 3> vertices, ClipPlane plane);
-    Model normalize_model(Model model);
+    void rasterize_model(ScratchModel& scratch, std::vector<float>& z_buffer, int width, int height);
 
-    void render_model(Model model, glm::mat4 const& projection_to_viewport_transform);
+    SDL_Surface* m_surface = nullptr;
 };
 
 }

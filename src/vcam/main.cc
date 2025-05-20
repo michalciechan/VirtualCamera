@@ -32,12 +32,18 @@ const vcam::Model PYRAMID_MODEL(
             glm::vec4(0.5, std::sqrtf(2.0f / 3), std::sqrtf(3.0f) / 6, 1)
         },
         {
-            {0, 1, 2},
-            {0, 2, 3},
+            {0, 2, 1},
+            {0, 3, 2},
             {1, 2, 3},
             {0, 1, 3}
+        },
+        {
+            {1, 0, 0},
+            {0, 1, 0},
+            {0, 0, 1},
+            {1, 0, 1},
         }
-    )
+        )
 );
 
 void on_init(GlobalState& state);
