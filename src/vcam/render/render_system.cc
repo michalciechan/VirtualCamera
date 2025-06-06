@@ -238,7 +238,7 @@ void RenderSystem::rasterize_model(
                 continue;
             }
 
-            for (int x = std::ceil(min_x); x <= std::ceil(max_x); ++x) {
+            for (int x = std::floor(min_x); x <= std::ceil(max_x); ++x) {
                 if (x < 0 || x >= width) {
                     continue;
                 }
