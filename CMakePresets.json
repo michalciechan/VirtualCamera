@@ -1,0 +1,24 @@
+{
+    "version": 2,
+    "configurePresets": [
+        {
+            "name": "default",
+            "generator": "Ninja Multi-Config",
+            "binaryDir": "${sourceDir}/build"
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "displayName": "Debug",
+            "configurePreset": "default",
+            "configuration": "Debug"
+        },
+        {
+            "name": "release",
+            "displayName": "Release",
+            "configurePreset": "default",
+            "configuration": "RelWithDebInfo"
+        }
+    ]
+}
