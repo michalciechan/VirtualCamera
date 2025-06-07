@@ -77,14 +77,14 @@ glm::mat4 calculate_scene_to_camera_transform(Camera const& camera) {
 
 glm::mat4 calculate_camera_to_projection_transform(Camera const& camera, float aspect_ratio) {
     auto const half_tan = std::tan(to_radians(camera.vfov) * 0.5f);
-    auto const z_near = 1.0f;
-    auto const z_far = 100.0f;
+    auto const z_near = 0.01f;
+    auto const z_far = 1000.0f;
 
     return {
         1 / (half_tan * aspect_ratio), 0, 0, 0,
         0, 1 / half_tan, 0, 0,
-        0, 0, (-z_near - z_far) / (z_near - z_far), 1,
-        0, 0, (2 * z_near * z_far) / (z_near - z_far), 0
+        0, 0, z_near / (z_near - z_far), 1,
+        0, 0, (z_near * z_far) / (z_far - z_near), 0
     };
 }
 
@@ -192,15 +192,19 @@ void RenderSystem::clip_model(ScratchModel& scratch) {
 void RenderSystem::normalize_model(ScratchModel& scratch) {
     for (std::size_t i = 0; i < scratch.vertices.size(); ++i) {
         auto& vertex = scratch.vertices[i];
-        scratch.inv_w[i] = 1 / vertex.w;
-        scratch.colors[i] = scratch.colors[i] / vertex.w;
-        vertex /= vertex.w;
+
+        auto const inv_w = 1 / vertex.w;
+        vertex *= inv_w;
+        vertex.w = inv_w;
     }
 }
 
 void RenderSystem::viewport_model(ScratchModel& scratch, glm::mat4 const& projection_to_viewport_transform) {
     for (auto& vertex : scratch.vertices) {
-        vertex = projection_to_viewport_transform * vertex;
+        auto const inv_w = vertex.w;
+
+        vertex = projection_to_viewport_transform * glm::vec4(glm::vec3(vertex), 1.0f);
+        vertex.w = inv_w;
     }
 }
 
@@ -209,6 +213,16 @@ static glm::vec3 calculate_barycentric_coordinates(
     glm::vec2 const& b,
     glm::vec2 const& c,
     glm::vec2 const& point
+);
+
+static bool is_back_face(glm::vec4 v0, glm::vec4 v1, glm::vec4 v2);
+
+template <typename T>
+static T interpolate_barycentrically(
+    T const& a,
+    T const& b,
+    T const& c,
+    glm::vec3 const& lambda
 );
 
 void RenderSystem::rasterize_model(
@@ -220,11 +234,7 @@ void RenderSystem::rasterize_model(
     auto const& vertices = scratch.vertices;
 
     for (auto const& triangle : scratch.triangles) {
-        auto const direction = glm::cross(
-            glm::vec3(glm::vec2(vertices[triangle[1]]), 0.0f) - glm::vec3(glm::vec2(vertices[triangle[0]]), 0.0f),
-            glm::vec3(glm::vec2(vertices[triangle[2]]), 0.0f) - glm::vec3(glm::vec2(vertices[triangle[0]]), 0.0f)
-        ).z;
-        if (direction > 0) {
+        if (is_back_face(vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]])) {
             continue;
         }
 
@@ -248,15 +258,24 @@ void RenderSystem::rasterize_model(
                     glm::vec2(x + 0.5f, y + 0.5f)
                 );
 
-                auto const depth = scratch.inv_w[triangle[0]] * lambda.x +
-                    scratch.inv_w[triangle[1]] * lambda.y +
-                    scratch.inv_w[triangle[2]] * lambda.z;
+                auto const inv_w = interpolate_barycentrically(
+                    vertices[triangle[0]].w,
+                    vertices[triangle[1]].w,
+                    vertices[triangle[2]].w,
+                    lambda
+                );
+
+                auto const reverse_z = interpolate_barycentrically(
+                    vertices[triangle[0]].z,
+                    vertices[triangle[1]].z,
+                    vertices[triangle[2]].z,
+                    lambda
+                ) / inv_w;
 
                 auto const depth_buffer_index = static_cast<std::size_t>(y) * width + x;
 
-                if (depth > depth_buffer[depth_buffer_index]) {
-                    depth_buffer[depth_buffer_index] = depth;
 
+                if (std::isnan(reverse_z) || reverse_z > depth_buffer[depth_buffer_index]) {
                     auto color = scratch.colors[triangle[0]] * lambda.x +
                         scratch.colors[triangle[1]] * lambda.y +
                         scratch.colors[triangle[2]] * lambda.z;
@@ -288,6 +307,24 @@ glm::vec3 calculate_barycentric_coordinates(
     }
 
     return { alpha, beta, gamma };
+}
+
+bool is_back_face(glm::vec4 v0, glm::vec4 v1, glm::vec4 v2) {
+    auto const direction = glm::cross(
+        glm::vec3(glm::vec2(v1), 0.0f) - glm::vec3(glm::vec2(v0), 0.0f),
+        glm::vec3(glm::vec2(v2), 0.0f) - glm::vec3(glm::vec2(v0), 0.0f)
+    ).z;
+    return direction > 0;
+}
+
+template <typename T>
+static T interpolate_barycentrically(
+    T const& a,
+    T const& b,
+    T const& c,
+    glm::vec3 const& lambda
+) {
+    return a * lambda.x + b * lambda.y + c * lambda.z;
 }
 
 }
