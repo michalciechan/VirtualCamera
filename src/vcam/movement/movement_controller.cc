@@ -5,6 +5,9 @@
 
 namespace vcam {
 
+static glm::vec3 calculate_rotation_delta(bool const* keyboard, float dt);
+static glm::vec3 calculate_translation_delta(bool const* keyboard, float dt);
+
 void MovementController::on_update(Entity& entity, float dt) {
     auto* keyboard = SDL_GetKeyboardState(nullptr);
 
@@ -32,7 +35,7 @@ void MovementController::on_update(Entity& entity, float dt) {
     entity.rotation(new_rotation);
 }
 
-glm::vec3 MovementController::calculate_rotation_delta(bool const* keyboard, float dt) {
+glm::vec3 calculate_rotation_delta(bool const* keyboard, float dt) {
     auto speed = 0.0005f;
 
     glm::vec3 rotation(0.0f);
@@ -64,7 +67,7 @@ glm::vec3 MovementController::calculate_rotation_delta(bool const* keyboard, flo
     return rotation;
 }
 
-glm::vec3 MovementController::calculate_translation_delta(bool const* keyboard, float dt) {
+glm::vec3 calculate_translation_delta(bool const* keyboard, float dt) {
     auto speed = 0.0025f;
     if (keyboard[SDL_SCANCODE_LSHIFT]) {
         speed *= 2.0f;
