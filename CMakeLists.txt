@@ -11,6 +11,7 @@ target_sources(VirtualCamera PRIVATE
     src/vcam/core/math.cc
     src/vcam/movement/movement_controller.cc
     src/vcam/render/camera_component.cc
+    src/vcam/render/light_component.cc
     src/vcam/render/render_component.cc
     src/vcam/render/render_system.cc
 )
