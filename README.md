@@ -6,11 +6,11 @@ A simple 3D software renderer written in C++.
 
 ## Key Features
 
-- Software rasterization pipeline written in C++ 20
-- Camera control with full 3D translation, rotation, and zoom
-- Scene defined using triangle-based B-rep models
-- Reverse z-buffer and back-face culling for visibility determination
-- Phong reflection model with material support
+- Software rasterization pipeline written in C++ 20.
+- Camera control with full 3D translation, rotation, and zoom.
+- Scene defined using triangle-based B-rep models.
+- Reverse z-buffer and back-face culling for visibility determination.
+- Phong reflection model with material support.
 
 ## Description
 
